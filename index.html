@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Base Merge 2048</title>
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --card-bg: #161b22;
+            --border-color: #30363d;
+            --text-color: #e6edf3;
+            --accent-color: #0052ff;
+            --accent-hover: #1964ff;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        h1 { margin-bottom: 5px; color: var(--accent-color); }
+        .subtitle { font-size: 14px; color: #8b949e; margin-bottom: 20px; }
+        .game-container {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+            font-size: 16px;
+        }
+        .stat-box {
+            background: rgba(0,82,255,0.1);
+            border: 1px solid var(--border-color);
+            padding: 10px 15px;
+            border-radius: 8px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            background-color: #21262d;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .cell {
+            aspect-ratio: 1;
+            background-color: #30363d;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--text-color);
+        }
+        .tile-2 { background-color: #1f6feb; color: #fff; }
+        .tile-4 { background-color: #238636; color: #fff; }
+        .tile-8 { background-color: #9e6a03; color: #fff; }
+        .tile-16 { background-color: #bd561d; color: #fff; }
+        .tile-32 { background-color: #da3633; color: #fff; }
+        .tile-64 { background-color: #8957e5; color: #fff; }
+        
+        .btn {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 10px;
+            transition: background 0.2s;
+        }
+        .btn:hover { background-color: var(--accent-hover); }
+        .btn:disabled { background-color: #30363d; color: #8b949e; cursor: not-allowed; }
+        .tx-status { font-size: 13px; color: #8b949e; margin-top: 10px; min-height: 20px; }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <h1>Base Merge 2048</h1>
+        <div class="subtitle">Free On-Chain Puzzle Game</div>
+
+        <div class="stats">
+            <div class="stat-box">Score: <span id="score">0</span></div>
+            <div class="stat-box">Next: <span id="next-tile">2</span></div>
+        </div>
+
+        <div class="grid" id="grid"></div>
+
+        <button class="btn" id="connect-btn" onclick="connectWallet()">Free On-Chain Sign-In</button>
+        <button class="btn" id="drop-btn" onclick="dropTile()" disabled>Drop Tile</button>
+        
+        <div class="tx-status" id="tx-status">Status: Disconnected</div>
+    </div>
+
+    <!-- Подключаем ethers.js для работы со смарт-контрактом -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+    <script>
+        // Твой адрес смарт-контракта
+        const CONTRACT_ADDRESS = "0x763Ecc4Be6f11A6De6E75D348b4Ad902250C4F55";
+        
+        // Минимальный ABI для вызова registerPlayer и submitScore
+        const CONTRACT_ABI = [
+            "function registerPlayer() external",
+            "function submitScore(uint256 _score) external",
+            "function players(address) view returns (bool isRegistered, uint256 highScore, uint256 totalGamesPlayed)"
+        ];
+
+        let provider, signer, contract;
+        let board = Array(16).fill(0);
+        let score = 0;
+        let nextTileValue = 2;
+        let isConnected = false;
+
+        const gridEl = document.getElementById('grid');
+        const scoreEl = document.getElementById('score');
+        const nextTileEl = document.getElementById('next-tile');
+        const connectBtn = document.getElementById('connect-btn');
+        const dropBtn = document.getElementById('drop-btn');
+        const txStatus = document.getElementById('tx-status');
+
+        function renderBoard() {
+            gridEl.innerHTML = '';
+            board.forEach((val) => {
+                const cell = document.createElement('div');
+                cell.classList.add('cell');
+                if (val > 0) {
+                    cell.textContent = val;
+                    cell.classList.add(`tile-${val}`);
+                }
+                gridEl.appendChild(cell);
+            });
+            scoreEl.textContent = score;
+            nextTileEl.textContent = nextTileValue;
+        }
+
+        function generateNextValue() {
+            nextTileValue = Math.random() < 0.8 ? 2 : 4;
+            nextTileEl.textContent = nextTileValue;
+        }
+
+        async function connectWallet() {
+            if (window.ethereum) {
+                try {
+                    txStatus.textContent = "Connecting to wallet...";
+                    provider = new ethers.providers.Web3Provider(window.ethereum);
+                    await provider.send("eth_requestAccounts", []);
+                    signer = provider.getSigner();
+                    const userAddress = await signer.getAddress();
+
+                    contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+                    txStatus.textContent = "Registering on-chain (Free)...";
+                    
+                    try {
+                        // Вызов функции бесплатной регистрации в контракте
+                        const tx = await contract.registerPlayer();
+                        txStatus.textContent = "Confirming registration tx...";
+                        await tx.wait();
+                    } catch (e) {
+                        // Если уже зарегистрирован — пропускаем ошибку и просто заходим
+                        console.log("Already registered or skipped:", e);
+                    }
+
+                    isConnected = true;
+                    txStatus.textContent = `Connected: ${userAddress.substring(0, 6)}...`;
+                    connectBtn.style.display = 'none';
+                    dropBtn.disabled = false;
+                    startGame();
+                } catch (error) {
+                    console.error(error);
+                    txStatus.textContent = "Connection / Tx rejected.";
+                }
+            } else {
+                alert("Please install MetaMask or Coinbase Wallet!");
+            }
+        }
+
+        function startGame() {
+            board.fill(0);
+            score = 0;
+            addNewTile();
+            addNewTile();
+            generateNextValue();
+            renderBoard();
+        }
+
+        function addNewTile() {
+            let emptyCells = [];
+            board.forEach((val, idx) => { if (val === 0) emptyCells.push(idx); });
+            if (emptyCells.length > 0) {
+                let randomCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+                board[randomCell] = 2;
+            }
+        }
+
+        async function submitScoreOnChain(finalScore) {
+            if (!isConnected || !contract) return;
+            try {
+                txStatus.textContent = "Saving score on-chain...";
+                const tx = await contract.submitScore(finalScore);
+                await tx.wait();
+                txStatus.textContent = "Score saved on-chain successfully!";
+            } catch (e) {
+                console.error(e);
+                txStatus.textContent = "Failed to save score on-chain.";
+            }
+        }
+
+        function dropTile() {
+            if (!isConnected) return;
+
+            let emptyCells = [];
+            board.forEach((val, idx) => { if (val === 0) emptyCells.push(idx); });
+
+            if (emptyCells.length === 0) {
+                alert("Game Over! Final Score: " + score);
+                submitScoreOnChain(score);
+                startGame();
+                return;
+            }
+
+            let chosenCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+            board[chosenCell] = nextTileValue;
+
+            processMerges();
+
+            score += nextTileValue;
+            generateNextValue();
+            renderBoard();
+            txStatus.textContent = "Move made!";
+        }
+
+        function processMerges() {
+            for (let i = 0; i < 15; i++) {
+                if (board[i] > 0 && board[i] === board[i+1] && (i % 4 !== 3)) {
+                    board[i] *= 2;
+                    score += board[i];
+                    board[i+1] = 0;
+                }
+            }
+        }
+
+        renderBoard();
+    </script>
+</body>
+</html>
